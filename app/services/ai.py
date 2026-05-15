@@ -12,59 +12,88 @@ def _b64(path: str) -> str:
 def _fallback(frames: list[str], attempt: int = 0) -> dict:
     return {
         "products": [{
-            "name": "Mahsulot nomi aniqlashtiriladi",
+            "name": "Yangi mahsulot",
             "category": "umumiy",
             "topic_key": "umumiy",
             "color": "aniqlashtirish kerak",
-            "description": "Mahsulot ko‘rinishi yuborilgan video/rasm kadridan olindi. Narx, o‘lcham va model admin tomonidan aniqlashtiriladi.",
-            "caption": "🛍 Yangi mahsulot keldi!\n\n📌 Model: aniqlashtiriladi\n📏 O‘lcham: admin orqali\n🚚 Yetkazib berish: kelishiladi\n\nBuyurtma uchun yozing 👇\n#yangi_mahsulot #savdo",
+            "description": "Mahsulot rasmi asosida reklama tayyorlandi. O‘lcham, narx va mavjud ranglar admin orqali aniqlashtiriladi.",
+            "caption": "Yangi mahsulot\n\nQulay va kundalik foydalanishga mos. Buyurtma uchun yozing.",
+            "poster_title": "YANGI MAHSULOT",
+            "poster_subtitle": "Qulay • Zamonaviy • Buyurtma uchun yozing",
+            "short_features": ["Qulay", "Zamonaviy", "Kundalik"],
             "hashtags": ["#yangi_mahsulot", "#savdo"],
             "confidence": 0.35,
             "source_frame_index": 0
         }],
         "recommended_topic": "umumiy",
-        "notes": "AI aniqligi past bo‘ldi. Rasm/post tayyorlandi, lekin admin tekshirishi kerak."
+        "notes": "AI aniqligi past bo‘ldi. Admin tekshirishi kerak.",
+        "transcript_used": ""
     }
 
 
-def analyze_product_frames(frames: list[str], attempt: int = 0, feedback: str | None = None) -> dict:
+def transcribe_audio(audio_path: str | None) -> str:
+    if not audio_path or not settings.enable_audio_transcription or not settings.openai_api_key:
+        return ""
+    try:
+        client = OpenAI(api_key=settings.openai_api_key)
+        with open(audio_path, "rb") as f:
+            txt = client.audio.transcriptions.create(
+                model=settings.transcribe_model,
+                file=f,
+                response_format="text",
+                prompt="Uzbek, Russian, Turkish and mixed marketplace product sale speech. Return clean text."
+            )
+        return str(txt or "").strip()[:3000]
+    except Exception:
+        return ""
+
+
+def analyze_product_frames(frames: list[str], attempt: int = 0, feedback: str | None = None, transcript: str = "") -> dict:
     if not settings.openai_api_key:
-        return _fallback(frames, attempt)
+        data = _fallback(frames, attempt)
+        data["transcript_used"] = transcript
+        return data
 
     client = OpenAI(api_key=settings.openai_api_key)
     topic_keys = ", ".join(settings.topics.keys()) or "kiyim, oyoq_kiyim, umumiy"
     prompt = f"""
-Siz xalqaro darajadagi e-commerce merchandiser, fashion/product visual analyst va Telegram savdo kopirayterisiz.
-Vazifa: yuborilgan video/rasm kadrlarini real ko‘rib chiqib, undagi mahsulot(lar)ni aniqlash.
+Siz professional e-commerce merchandiser, product visual analyst va Telegram savdo kopirayterisiz.
+Kadrlarni REAL ko‘rib tahlil qiling. Maqsad: reklama posteri uchun aniq, qisqa va sotuvga mos ma'lumot berish.
+
+MAVJUD TOPICLAR: {topic_keys}
+ADMIN FEEDBACK: {feedback or 'yo‘q'}
+VIDEO OVOZIDAN TRANSKRIPT: {transcript or 'yo‘q'}
+URINISH: {attempt}
 
 QOIDALAR:
-1) Mahsulotni ko‘rmasdan uydirmang. Noaniq bo‘lsa confidence pasaytiring.
-2) Agar bir nechta mahsulot ko‘rinsa, har birini alohida products ro‘yxatiga kiriting.
-3) Kategoriya va topic_key faqat mavjud topiclarga yaqin bo‘lsin. Mavjud topiclar: {topic_keys}
-4) Kiyim bo‘lsa: kiyim turi, rang, uslub, kimlar uchun mosligini yozing.
-5) Oyoq kiyim bo‘lsa: turi, rang, mavsum, qulaylik haqida yozing.
-6) Narxni, brendni, o‘lchamni uydirmang. Kerak bo‘lsa “o‘lcham admin orqali aniqlashtiriladi” deb yozing.
-7) Caption juda chiroyli, sotuvga mos, ishonchli, qisqa va kuchli bo‘lsin. Uzbek lotin yozuvida yozing.
-8) Qayta tayyorlash bo‘lsa, oldingi xatoni tuzatishga harakat qiling.
-
-Admin feedback: {feedback or 'yo‘q'}
-Urinish raqami: {attempt}
+1) Uydirmang. Ko‘rinmagan narx, brend, o‘lchamni yozmang.
+2) Mahsulot nomi aniq bo‘lsin: masalan “Qora sport krossovka”, “Ayollar ko‘ylagi”.
+3) Post qisqa bo‘lsin. Ortiqcha emoji, ortiqcha uzun gaplar kerak emas.
+4) Poster ichida yoziladigan matn: nom + 1 qator foyda/afzallik.
+5) Video ovozida real ma’lumot bo‘lsa, faqat keraklisini qo‘shing.
+6) Agar bir nechta mahsulot bo‘lsa, products ro‘yxatiga alohida kiriting.
+7) recommended_topic mavjud topiclardan biriga mos bo‘lsin.
+8) Uzbek lotin yozuvida yozing.
 
 Faqat JSON qaytaring:
 {{
  "products":[{{
    "name":"aniq mahsulot nomi",
-   "category":"kategoriya nomi",
-   "topic_key":"{topic_keys.split(',')[0].strip() if topic_keys else 'umumiy'}",
+   "category":"kategoriya",
+   "topic_key":"mavjud topic key",
    "color":"rang",
-   "description":"1-2 gap real tavsif",
-   "caption":"Telegram sotuv posti",
+   "description":"1 gap: mahsulot haqida real tavsif",
+   "caption":"Telegram uchun qisqa post, 2-4 qator",
+   "poster_title":"posterda katta yoziladigan nom",
+   "poster_subtitle":"posterda kichik yoziladigan 1 qator afzallik",
+   "short_features":["3 tagacha qisqa afzallik"],
    "hashtags":["#..."],
    "confidence":0.0,
    "source_frame_index":0
  }}],
  "recommended_topic":"topic_key",
- "notes":"admin uchun qisqa izoh"
+ "notes":"admin uchun qisqa izoh",
+ "transcript_used":"transkriptdan olingan foydali ma’lumot yoki bo‘sh"
 }}
 """
     content = [{"type": "text", "text": prompt}]
@@ -72,21 +101,25 @@ Faqat JSON qaytaring:
         content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_b64(f)}", "detail": "high"}})
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=settings.vision_model,
             messages=[{"role": "user", "content": content}],
             response_format={"type": "json_object"},
-            temperature=0.35,
+            temperature=0.25,
         )
         data = json.loads(resp.choices[0].message.content)
         if not data.get("products"):
             return _fallback(frames, attempt)
-        # Normalize topic
         for p in data.get("products", []):
             p.setdefault("topic_key", p.get("category", "umumiy"))
             p.setdefault("source_frame_index", 0)
+            p.setdefault("poster_title", p.get("name", "Yangi mahsulot"))
+            p.setdefault("poster_subtitle", p.get("description", "Buyurtma uchun yozing"))
+            p.setdefault("caption", f"{p.get('name','Yangi mahsulot')}\n\n{p.get('description','Buyurtma uchun yozing.')}")
         data.setdefault("recommended_topic", data.get("products", [{}])[0].get("topic_key", "umumiy"))
+        data.setdefault("transcript_used", transcript[:800])
         return data
     except Exception as e:
         data = _fallback(frames, attempt)
         data["notes"] = f"AI xatolik: {e}. Fallback post tayyorlandi."
+        data["transcript_used"] = transcript
         return data
