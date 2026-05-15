@@ -37,19 +37,46 @@ async def status(message: Message):
     text = "📊 Oxirgi buyurtmalar:\n\n" + "\n".join([f"#{j.id} — {j.status}" for j in jobs])
     await message.answer(text)
 
-@dp.message(F.video | F.document)
+@dp.message(F.video | F.document | F.video_note)
 async def receive_video(message: Message):
     if not is_admin(message.from_user.id):
         return
-    tg_file = message.video or message.document
+
+    tg_file = None
+    file_type = "video"
+
+    if message.video:
+        tg_file = message.video
+        file_type = "video"
+
+    elif message.video_note:
+        tg_file = message.video_note
+        file_type = "video_note"
+
+    elif message.document:
+        if not (message.document.mime_type or "").startswith("video/"):
+            await message.answer("Iltimos, video fayl yuboring.")
+            return
+        tg_file = message.document
+        file_type = "document_video"
+
     if not tg_file:
+        await message.answer("Video topilmadi. Oddiy video yoki video-message yuboring.")
         return
-    if message.document and not (message.document.mime_type or "").startswith("video/"):
-        await message.answer("Iltimos, video fayl yuboring.")
-        return
+
     job = repo.create_job(message.from_user.id, tg_file.file_id)
     await job_queue.put(job.id)
-    await message.answer(f"✅ #{job.id} video qabul qilindi. Navbatga qo‘yildi. Tayyor bo‘lganda xabar beraman.")
+
+    if file_type == "video_note":
+        await message.answer(
+            f"✅ #{job.id} dumaloq video-message qabul qilindi. "
+            f"Navbatga qo‘yildi. Tayyor bo‘lganda xabar beraman."
+        )
+    else:
+        await message.answer(
+            f"✅ #{job.id} video qabul qilindi. "
+            f"Navbatga qo‘yildi. Tayyor bo‘lganda xabar beraman."
+        )
 
 async def process_job(job_id: int, feedback: str | None = None):
     async with semaphore:
