@@ -3,33 +3,66 @@ from aiogram.types import FSInputFile
 from app.config import settings
 
 
-def compose_preview_text(job_id: int, result: dict) -> str:
-    topic = result.get("recommended_topic", "umumiy")
+def _topic_key(key: str | None) -> str:
+    key = (key or "umumiy").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "oyoqkiyim": "oyoq_kiyim",
+        "oyoq_kiyimlar": "oyoq_kiyim",
+        "poyabzal": "oyoq_kiyim",
+        "krossovka": "oyoq_kiyim",
+        "sport_krossovka": "oyoq_kiyim",
+        "ayollar_kiyimi": "kiyim",
+        "erkaklar_kiyimi": "kiyim",
+        "kiyimlar": "kiyim",
+    }
+    key = aliases.get(key, key)
+    if key not in settings.topics and "oyoq" in key:
+        return "oyoq_kiyim"
+    if key not in settings.topics and "kiyim" in key:
+        return "kiyim"
+    return key
+
+
+def make_sale_caption(result: dict) -> str:
     p = (result.get("products") or [{}])[0]
-    lines = [
+    name = p.get("name") or "Yangi mahsulot"
+    desc = p.get("description") or "Qulay va kundalik foydalanishga mos."
+    features = p.get("short_features") or []
+    lines = [f"🛍 {name}", ""]
+    if features:
+        lines.append(" • ".join([str(x) for x in features[:3]]))
+    else:
+        lines.append(desc)
+    lines.append("Buyurtma uchun yozing.")
+    return "\n".join(lines)[:1024]
+
+
+def compose_preview_text(job_id: int, result: dict) -> str:
+    topic = _topic_key(result.get("recommended_topic", "umumiy"))
+    p = (result.get("products") or [{}])[0]
+    return "\n".join([
         f"✅ #{job_id} buyurtma tayyor",
         "",
         f"📌 Tavsiya topic: {topic}",
         "",
         f"🛍 Mahsulot: {p.get('name','Noma’lum')}",
-        f"Kategoriya: {p.get('category','umumiy')}",
+        f"Kategoriya: {_topic_key(p.get('topic_key') or p.get('category'))}",
         f"Ishonchlilik: {int(float(p.get('confidence',0))*100)}%",
         "",
-        p.get("caption", ""),
-    ]
-    if result.get("transcript_used"):
-        lines += ["", "🎙 Video ovozidan foydali ma’lumot qo‘shildi."]
-    if result.get("notes"):
-        lines += ["", f"ℹ️ {result['notes']}"]
-    return "\n".join(lines)[:3900]
+        make_sale_caption(result),
+        "",
+        "ℹ️ Rasm ichida matn yo‘q. Post matni rasm ostida alohida caption bo‘lib joylanadi."
+    ])[:3900]
 
 
 async def send_final_post(bot: Bot, topic_name: str, result: dict, images: list[str]) -> None:
-    thread_id = settings.topics.get(topic_name, settings.topics.get("umumiy", 0))
-    p = (result.get("products") or [{}])[0]
-    caption = p.get("caption") or p.get("description") or p.get("name", "Mahsulot")
+    topic_name = _topic_key(topic_name)
+    thread_id = settings.topics.get(topic_name)
+    caption = make_sale_caption(result)
+    kwargs = {}
+    if thread_id:
+        kwargs["message_thread_id"] = int(thread_id)
     if images:
-        # One final professional poster only
-        await bot.send_photo(settings.target_group_id, FSInputFile(images[0]), caption=caption[:1024], message_thread_id=thread_id or None)
+        await bot.send_photo(settings.target_group_id, FSInputFile(images[0]), caption=caption, **kwargs)
     else:
-        await bot.send_message(settings.target_group_id, caption[:3900], message_thread_id=thread_id or None)
+        await bot.send_message(settings.target_group_id, caption, **kwargs)
