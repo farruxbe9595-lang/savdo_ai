@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-import base64
+import time
+import requests
+from io import BytesIO
+from urllib.parse import quote
 from PIL import Image, ImageOps, ImageEnhance
-from openai import OpenAI
 from app.config import settings
 
 
 def _prep_reference(src_path: str, out_dir: str) -> str:
+    """Referens rasmni tayyorlash (agar fallback kerak bo'lsa)"""
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     img = Image.open(src_path)
     img = ImageOps.exif_transpose(img).convert("RGB")
@@ -18,29 +21,82 @@ def _prep_reference(src_path: str, out_dir: str) -> str:
     return out
 
 
-def _save_b64(b64: str, path: str) -> str:
-    Path(path).write_bytes(base64.b64decode(b64))
-    return path
+def _pollinations_generate(prompt: str, out_dir: str, retries: int = 3) -> str:
+    """
+    Pollinations.ai orqali FLUX rasm generatsiya qilish.
+    BEPUL, API kalit kerakmas.
+    15 soniyada 1 ta rasm limiti bor (anonymous tier).
+    """
+    import uuid
+
+    # Promptni URL encoded qilish (uzunligi 1000 belgidan oshmasin)
+    encoded = quote(prompt[:1000])
+
+    url = f"https://image.pollinations.ai/prompt/{encoded}"
+
+    params = {
+        "model": "flux",
+        "width": 1024,
+        "height": 1024,
+        "seed": str(uuid.uuid4().int)[:8],
+        "nologo": "true",
+    }
+
+    last_error = None
+
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, params=params, timeout=90)
+
+            if response.status_code == 429:
+                # Rate limit — 15 soniya kutib, qayta urinish
+                wait = 15
+                print(f"[pollinations] rate limited, waiting {wait}s (attempt {attempt+1}/{retries})")
+                time.sleep(wait)
+                continue
+
+            if response.status_code != 200:
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                print(f"[pollinations] error: {last_error}")
+                time.sleep(5)
+                continue
+
+            # Rasmni saqlash
+            out_path = str(Path(out_dir) / f"pollinations_{uuid.uuid4().hex[:8]}.png")
+            img = Image.open(BytesIO(response.content))
+            img.save(out_path, quality=95)
+            return out_path
+
+        except requests.exceptions.Timeout:
+            last_error = "timeout"
+            print(f"[pollinations] timeout (attempt {attempt+1}/{retries})")
+            time.sleep(10)
+        except Exception as e:
+            last_error = str(e)
+            print(f"[pollinations] exception: {e}")
+            time.sleep(5)
+
+    raise RuntimeError(f"Pollinations failed after {retries} retries: {last_error}")
 
 
 def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> list[str]:
     """
-    Generate 3 visuals:
+    Generate 3 visuals using Pollinations.ai (free FLUX):
     1) studio front/side product render
     2) studio opposite angle product render
     3) full lifestyle/worn image
 
-    Original user photo is used only as reference, not placed in final poster.
+    Original user photo is used as reference for prompts.
     """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     ref = _prep_reference(source_image, out_dir)
-    fallback = [ref, ref, ref]
 
-    if not settings.enable_ai_image_gen or not settings.openai_api_key:
-        return fallback
+    # Agar rasm generatsiya o'chirilgan bo'lsa, referensni qaytarish
+    if not settings.enable_ai_image_gen:
+        return [ref, ref, ref]
 
     name = product.get("name", "product")
-    color = product.get("color", "same color")
+    color = product.get("color", "")
     category = product.get("category", "product")
 
     lower = f"{name} {category} {color}".lower()
@@ -61,78 +117,23 @@ def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> 
         or "shirt" in lower
     )
 
-    base_rules = (
-        "Use the uploaded reference product as the strict source of truth. "
-        "Preserve the same product type, same color, same material texture, same sole shape if footwear, "
-        "same knitted or mesh surface, same decorative stripes, same logo position and general silhouette. "
-        "Do not invent a different model. Do not add text, watermark, price, label, box, extra accessories, "
-        "extra logos, duplicate products, or changed colors. "
-        "Photorealistic premium e-commerce advertising quality. "
-    )
-
+    # Promptlar — Pollinations FLUX ingliz tilini yaxshi tushunadi
     prompts = [
         (
-            f"{base_rules}"
-            f"Create a clean studio product render of the same {name}. "
-            f"Camera: front three-quarter view. "
-            f"The entire product must be fully visible inside the frame with clear empty margins. "
-            f"Do not crop any part of the product. Premium light background."
+            f"Professional e-commerce studio product photo of {name} in {color}. "
+            f"Front three-quarter view, entire product fully visible, clean white background, "
+            f"photorealistic, premium quality, soft studio lighting, empty margins around product. "
+            f"No text, no watermark, no logo."
         ),
         (
-            f"{base_rules}"
-            f"Create a clean studio product render of the same {name}. "
-            f"Camera: opposite side or back three-quarter view. "
-            f"The entire product must be fully visible inside the frame with clear empty margins. "
-            f"Do not crop toe, heel, sole, upper, logo, sleeve, collar, or edges. Premium light background."
+            f"Professional e-commerce studio product photo of {name} in {color}. "
+            f"Back or opposite side three-quarter view, entire product fully visible, "
+            f"clean white background, photorealistic, premium quality, soft studio lighting. "
+            f"No text, no watermark, no logo."
         ),
     ]
 
     if is_shoe:
         prompts.append(
-            f"{base_rules}"
-            f"Create a lifestyle e-commerce photo where one person is wearing the same {name} on foot. "
-            f"IMPORTANT: full shoe must be visible from toe to heel. "
-            f"No part of the shoe may be cropped or cut off. "
-            f"Show the entire shoe, complete sole, full toe, full heel, ankle opening, side logo and decorative stripes. "
-            f"Use zoomed-out camera framing with enough empty margin around the shoe. "
-            f"Show lower leg and ankle only, neutral pants, clean floor or studio background. "
-            f"Realistic scale, professional marketplace photo, no text."
-        )
-    elif is_cloth:
-        prompts.append(
-            f"{base_rules}"
-            f"Create a lifestyle fashion e-commerce photo of a model wearing the exact same clothing item. "
-            f"IMPORTANT: show the full clothing item clearly from top to bottom. "
-            f"No part of the clothing item may be cropped or cut off. "
-            f"Use zoomed-out framing with enough empty margin. Clean studio background, no text."
-        )
-    else:
-        prompts.append(
-            f"{base_rules}"
-            f"Create a lifestyle advertising photo of the exact same product being used naturally. "
-            f"IMPORTANT: the whole product must be fully visible, not cropped, with enough empty margin. "
-            f"Premium clean setting, no text."
-        )
-
-    outputs = []
-
-    try:
-        client = OpenAI(api_key=settings.openai_api_key)
-
-        for i, prompt in enumerate(prompts, 1):
-            with open(ref, "rb") as img_file:
-                result = client.images.edit(
-                    model=settings.image_model,
-                    image=img_file,
-                    prompt=prompt,
-                    size="1024x1024",
-                )
-
-            b64 = result.data[0].b64_json
-            outputs.append(_save_b64(b64, str(Path(out_dir) / f"ai_visual_{i}.png")))
-
-        return outputs
-
-    except Exception as e:
-        print(f"[image_gen] error: {e}")
-        return fallback
+            f"Lifestyle e-commerce photo of a person wearing {name} in {color} on their feet. "
+            f"Full shoe visible from toe to heel, no cropping, ankle and
