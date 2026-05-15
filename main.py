@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from app.config import settings
 from app.db.models import init_db
 from app.db import repo
-from app.services.video import extract_frames
+from app.services.video import extract_frames, prepare_image_frame
 from app.services.ai import analyze_product_frames
 from app.services.render import make_ad_cards
 from app.services.telegram_post import compose_preview_text, send_final_post
@@ -37,46 +37,45 @@ async def status(message: Message):
     text = "📊 Oxirgi buyurtmalar:\n\n" + "\n".join([f"#{j.id} — {j.status}" for j in jobs])
     await message.answer(text)
 
-@dp.message(F.video | F.document | F.video_note)
-async def receive_video(message: Message):
+@dp.message(F.video | F.document | F.video_note | F.photo)
+async def receive_media(message: Message):
     if not is_admin(message.from_user.id):
         return
 
+    kind = "video"
     tg_file = None
-    file_type = "video"
 
     if message.video:
         tg_file = message.video
-        file_type = "video"
-
+        kind = "video"
     elif message.video_note:
         tg_file = message.video_note
-        file_type = "video_note"
-
+        kind = "video_note"
+    elif message.photo:
+        tg_file = message.photo[-1]
+        kind = "photo"
     elif message.document:
-        if not (message.document.mime_type or "").startswith("video/"):
-            await message.answer("Iltimos, video fayl yuboring.")
+        mime = message.document.mime_type or ""
+        if mime.startswith("video/"):
+            tg_file = message.document
+            kind = "video"
+        elif mime.startswith("image/"):
+            tg_file = message.document
+            kind = "photo"
+        else:
+            await message.answer("Iltimos, video yoki rasm yuboring.")
             return
-        tg_file = message.document
-        file_type = "document_video"
 
     if not tg_file:
-        await message.answer("Video topilmadi. Oddiy video yoki video-message yuboring.")
+        await message.answer("Video yoki rasm topilmadi. Oddiy video, dumaloq video-message yoki rasm yuboring.")
         return
 
-    job = repo.create_job(message.from_user.id, tg_file.file_id)
+    # file_id ichida media turini ham saqlaymiz, DB sxemasini buzmaslik uchun
+    job = repo.create_job(message.from_user.id, f"{kind}|{tg_file.file_id}")
     await job_queue.put(job.id)
 
-    if file_type == "video_note":
-        await message.answer(
-            f"✅ #{job.id} dumaloq video-message qabul qilindi. "
-            f"Navbatga qo‘yildi. Tayyor bo‘lganda xabar beraman."
-        )
-    else:
-        await message.answer(
-            f"✅ #{job.id} video qabul qilindi. "
-            f"Navbatga qo‘yildi. Tayyor bo‘lganda xabar beraman."
-        )
+    label = {"video": "video", "video_note": "dumaloq video-message", "photo": "rasm"}.get(kind, "media")
+    await message.answer(f"✅ #{job.id} {label} qabul qilindi. Navbatga qo‘yildi. Tayyor bo‘lganda xabar beraman.")
 
 async def process_job(job_id: int, feedback: str | None = None):
     async with semaphore:
@@ -86,18 +85,37 @@ async def process_job(job_id: int, feedback: str | None = None):
         frames_dir = work_dir / "frames"
         ads_dir = work_dir / "ads"
         work_dir.mkdir(parents=True, exist_ok=True)
-        video_path = work_dir / "input.mp4"
         try:
-            tg_file = await bot.get_file(job.file_id)
-            await bot.download_file(tg_file.file_path, destination=video_path)
-            repo.update_job(job_id, video_path=str(video_path))
-            frames = extract_frames(str(video_path), str(frames_dir), settings.frames_per_video)
+            raw_file_id = job.file_id
+            kind = "video"
+            file_id = raw_file_id
+            if "|" in raw_file_id:
+                kind, file_id = raw_file_id.split("|", 1)
+
+            media_path = work_dir / ("input.jpg" if kind == "photo" else "input.mp4")
+            tg_file = await bot.get_file(file_id)
+            await bot.download_file(tg_file.file_path, destination=media_path)
+            repo.update_job(job_id, video_path=str(media_path))
+
+            if kind == "photo":
+                frames = prepare_image_frame(str(media_path), str(frames_dir))
+            else:
+                frames = extract_frames(str(media_path), str(frames_dir), settings.frames_per_video)
             if not frames:
-                raise RuntimeError("Videodan kadr ajratib bo‘lmadi.")
+                raise RuntimeError("Media fayldan sifatli kadr ajratib bo‘lmadi.")
+
             result = analyze_product_frames(frames, attempt=job.attempts, feedback=feedback)
             topic = result.get("recommended_topic", "umumiy")
             first_product = result.get("products", [{}])[0]
-            cards = make_ad_cards(frames[0], first_product.get("name", "Mahsulot"), first_product.get("category", topic), str(ads_dir))
+            frame_index = int(first_product.get("source_frame_index", 0) or 0)
+            source_frame = frames[min(max(frame_index, 0), len(frames)-1)]
+            cards = make_ad_cards(
+                source_frame,
+                first_product.get("name", "Mahsulot"),
+                first_product.get("category", topic),
+                str(ads_dir),
+                first_product.get("caption", "")
+            )
             result["ad_images"] = cards
             repo.update_job(job_id, status="READY_FOR_REVIEW", result_json=json.dumps(result, ensure_ascii=False), recommended_topic=topic)
             await bot.send_message(job.admin_id, compose_preview_text(job_id, result), reply_markup=review_keyboard(job_id, topic))
