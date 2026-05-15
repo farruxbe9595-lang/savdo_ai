@@ -8,3 +8,4 @@ opencv-python-headless==4.10.0.84
 Pillow==10.4.0
 SQLAlchemy==2.0.32
 greenlet==3.0.3
+
