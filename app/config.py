@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     temp_dir: str = Field(default="temp", alias="TEMP_DIR")
     require_admin_approval: bool = Field(default=True, alias="REQUIRE_ADMIN_APPROVAL")
 
+    # PRO marketing poster options
+    enable_ai_image_gen: bool = Field(default=True, alias="ENABLE_AI_IMAGE_GEN")
+    enable_audio_transcription: bool = Field(default=True, alias="ENABLE_AUDIO_TRANSCRIPTION")
+    image_model: str = Field(default="gpt-image-1", alias="OPENAI_IMAGE_MODEL")
+    vision_model: str = Field(default="gpt-4o-mini", alias="OPENAI_VISION_MODEL")
+    transcribe_model: str = Field(default="gpt-4o-mini-transcribe", alias="OPENAI_TRANSCRIBE_MODEL")
+
     class Config:
         env_file = ".env"
         extra = "ignore"
