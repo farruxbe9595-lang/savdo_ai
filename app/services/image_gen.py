@@ -85,8 +85,6 @@ def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> 
     1) studio front/side product render
     2) studio opposite angle product render
     3) full lifestyle/worn image
-
-    Original user photo is used as reference for prompts.
     """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     ref = _prep_reference(source_image, out_dir)
@@ -111,7 +109,7 @@ def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> 
     is_cloth = (
         "kiyim" in lower
         or "ko'yl" in lower
-        or "ko‘yl" in lower
+        or "ko'yl" in lower
         or "futbolka" in lower
         or "dress" in lower
         or "shirt" in lower
@@ -136,7 +134,6 @@ def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> 
     if is_shoe:
         prompts.append(
             f"Lifestyle e-commerce photo of a person wearing {name} in {color} on their feet. "
-            f"Full shoe visible from toe to heel, no cropping, ankle and
             f"Full shoe visible from toe to heel, no cropping, ankle and lower leg visible, "
             f"neutral pants, clean studio floor background, professional marketplace photo. "
             f"No text, no watermark."
