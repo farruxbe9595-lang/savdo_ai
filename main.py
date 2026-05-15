@@ -117,7 +117,12 @@ async def process_job(job_id: int, feedback: str | None = None):
                 raise RuntimeError("Media fayldan sifatli kadr ajratib bo‘lmadi.")
 
             result = analyze_product_frames(frames, attempt=job.attempts, feedback=feedback, transcript=transcript)
-            topic = result.get("recommended_topic", "umumiy")
+            # Topic keylarni barqarorlashtirish: Oyoq-kiyim / oyoq kiyim / poyabzal -> oyoq_kiyim
+            from app.services.telegram_post import _topic_key
+            topic = _topic_key(result.get("recommended_topic", "umumiy"))
+            result["recommended_topic"] = topic
+            if result.get("products"):
+                result["products"][0]["topic_key"] = _topic_key(result["products"][0].get("topic_key") or result["products"][0].get("category"))
             first_product = (result.get("products") or [{}])[0]
             frame_index = int(first_product.get("source_frame_index", 0) or 0)
             source_frame = frames[min(max(frame_index, 0), len(frames)-1)]
