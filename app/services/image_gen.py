@@ -137,3 +137,41 @@ def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> 
         prompts.append(
             f"Lifestyle e-commerce photo of a person wearing {name} in {color} on their feet. "
             f"Full shoe visible from toe to heel, no cropping, ankle and
+            f"Full shoe visible from toe to heel, no cropping, ankle and lower leg visible, "
+            f"neutral pants, clean studio floor background, professional marketplace photo. "
+            f"No text, no watermark."
+        )
+    elif is_cloth:
+        prompts.append(
+            f"Lifestyle fashion e-commerce photo of a model wearing {name} in {color}. "
+            f"Full clothing item visible from top to bottom, no cropping, "
+            f"clean studio background, professional fashion photography. "
+            f"No text, no watermark."
+        )
+    else:
+        prompts.append(
+            f"Lifestyle advertising photo of {name} in {color} being used naturally. "
+            f"Whole product fully visible, not cropped, premium clean setting. "
+            f"No text, no watermark."
+        )
+
+    outputs = []
+
+    for i, prompt in enumerate(prompts, 1):
+        try:
+            print(f"[image_gen] generating visual {i}/3 via Pollinations...")
+            path = _pollinations_generate(prompt, out_dir)
+            outputs.append(path)
+            # Rate limitni hurmat qilish — 15 soniya kutish
+            if i < len(prompts):
+                print(f"[image_gen] waiting 15s before next generation (rate limit)...")
+                time.sleep(15)
+        except Exception as e:
+            print(f"[image_gen] visual {i} failed: {e}")
+            outputs.append(ref)
+
+    # Agar hammasi failed bo'lsa, referensni qaytarish
+    if not outputs:
+        return [ref, ref, ref]
+
+    return outputs
