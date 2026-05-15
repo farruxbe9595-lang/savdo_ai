@@ -1,3 +1,4 @@
+from app.services.progress import update_progress
 from __future__ import annotations
 import asyncio, json
 from pathlib import Path
