@@ -11,7 +11,7 @@ def _prep_reference(src_path: str, out_dir: str) -> str:
     img = Image.open(src_path)
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((1600, 1600), Image.LANCZOS)
-    img = ImageEnhance.Sharpness(img).enhance(1.10)
+    img = ImageEnhance.Sharpness(img).enhance(1.12)
     out = str(Path(out_dir) / "reference.png")
     img.save(out, "PNG")
     return out
@@ -23,8 +23,8 @@ def _save_b64(b64: str, path: str) -> str:
 
 
 def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> list[str]:
-    """Generate 3 marketing visuals from the original product image.
-    Falls back to original image if image generation is unavailable.
+    """Generate 3 visuals only: two clean product angles + one full lifestyle/worn image.
+    The original user photo is not used in the final poster; it is only a reference.
     """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     ref = _prep_reference(source_image, out_dir)
@@ -35,20 +35,32 @@ def generate_product_visuals(source_image: str, product: dict, out_dir: str) -> 
     name = product.get("name", "product")
     color = product.get("color", "same color")
     category = product.get("category", "product")
-    desc = product.get("description", "")
-    is_shoe = "oyoq" in category.lower() or "kross" in name.lower() or "shoe" in name.lower()
-    is_cloth = "kiyim" in category.lower() or "ko'yl" in name.lower() or "ko‘yl" in name.lower()
+    is_shoe = "oyoq" in category.lower() or "kross" in name.lower() or "shoe" in name.lower() or "poyabzal" in category.lower()
+    is_cloth = "kiyim" in category.lower() or "ko'yl" in name.lower() or "ko‘yl" in name.lower() or "futbolka" in name.lower()
+
+    base_rules = (
+        "Use the uploaded reference product only as the source of truth. "
+        "Preserve product type, black color if black, knitted/mesh texture, sole shape, visible stripes and logo position as much as possible. "
+        "Do not add text, watermark, price, brand label, extra objects, duplicate products, or changed colors. "
+        "Make it photorealistic e-commerce advertising quality."
+    )
 
     prompts = [
-        f"""Create a clean photorealistic marketplace product image using the reference product. Preserve the exact product identity, color, logo placement, sole/shape/details. Show the same {name} isolated on a premium light studio background, front three-quarter angle. No text, no watermark, no extra objects.""",
-        f"""Create a second photorealistic marketplace view of the same reference {name}. Preserve exact design, color {color}, materials and all visible details. Show side/back angle on clean studio background. No text, no watermark.""",
+        f"{base_rules} Create a clean studio marketplace render of the same {name}, front three-quarter view, product fully visible, centered, premium light background.",
+        f"{base_rules} Create a clean studio marketplace render of the same {name}, opposite side/back three-quarter view, product fully visible, centered, premium light background.",
     ]
     if is_shoe:
-        prompts.append(f"""Create a realistic lifestyle image: a person wearing the exact same reference {name} on foot. Preserve the shoe color, knitted texture, sole shape and logo. Modern casual outfit, clean background. No text, no watermark, product must remain recognizable.""")
+        prompts.append(
+            f"{base_rules} Create a lifestyle image where a person is wearing the same {name} on foot. Show the full shoe and enough of the foot/ankle clearly, not cropped. Neutral pants, clean floor/studio setting, realistic scale."
+        )
     elif is_cloth:
-        prompts.append(f"""Create a realistic lifestyle fashion image: a model wearing the exact same reference clothing item. Preserve fabric, color, cut and visible design. Clean e-commerce style. No text, no watermark.""")
+        prompts.append(
+            f"{base_rules} Create a lifestyle fashion image of a model wearing the exact same clothing item. Show the full clothing item clearly, not cropped, clean e-commerce setting."
+        )
     else:
-        prompts.append(f"""Create a realistic lifestyle advertising image of the exact same reference product being used naturally. Preserve product identity, color and details. Clean premium background. No text, no watermark.""")
+        prompts.append(
+            f"{base_rules} Create a lifestyle advertising image of the exact same product being used naturally. Product fully visible and clear, premium clean setting."
+        )
 
     outputs = []
     try:
